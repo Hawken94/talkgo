@@ -20,7 +20,7 @@
 
 ### 笔记详情
 - [ ] [第 0 阶段(开篇词)](./lessons/linux-performance-optimization/stage_0_begining.md)
-- [ ] [第 1 阶段(CPU 性能篇)]()
+- [ ] [第 1 阶段(CPU 性能篇)](./lessons/linux-performance-optimization/stage_1_cpu.md)
 - [ ] [第 2 阶段(内存和 I/O 性能篇)]()
 - [ ] [第 3 阶段(网络性能篇)]()
 - [ ] [第 4 阶段(综合实战篇)]()
