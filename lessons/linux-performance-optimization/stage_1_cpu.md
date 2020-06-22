@@ -6,6 +6,7 @@
 
 1. [02 | 基础篇：到底应该怎么理解“平均负载”？](#02)
 2. [03/04 | 基础篇：经常说的 CPU 上下文切换是什么意思？](#03/04)
+3. [05 | 基础篇：某个应用的CPU使用率居然达到100%，我该怎么办？](#05)
 
 
 
@@ -251,7 +252,7 @@ $ vmstat 5
 procs -----------memory---------- ---swap-- -----io---- -system-- ------cpu-----
  r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
  1  0      0 102504 315972 850352    0    0    16    37    0    2  1  1 98  1  0
- 
+
 # cs（context switch）是每秒上下文切换的次数。
 # in（interrupt）则是每秒中断的次数。
 # r（Running or Runnable）是就绪队列的长度，也就是正在运行和等待 CPU 的进程数。
@@ -319,4 +320,174 @@ $ watch -d 'cat /proc/interrupts | sort -nr -k 2 '
    - 自愿上下文切换变多了，说明进程都在等待资源，有可能发生了 I/O 等其他问题；
    - 非自愿上下文切换变多了，说明进程都在被强制调度，也就是都在争抢 CPU，说明 CPU 的确成了瓶颈；
    - 中断次数变多了，说明 CPU 被中断处理程序占用，还需要通过查看 /proc/interrupts 文件来分析具体的中断类型。
+
+
+## <a name = '05'>05 | 基础篇：某个应用的CPU使用率居然达到100%，我该怎么办？</a>
+
+### CPU 使用率
+
+CPU 使用率是单位时间内 CPU 使用情况的统计，以百分比的方式展示，是最常用也是最熟悉的 CPU 指标。
+
+节拍率（内核中表示为 HZ）：每秒触发时间中断的次数。
+
+```sh
+# 查看节拍率
+$ grep 'CONFIG_HZ=' /boot/config-$(uname -r)
+CONFIG_HZ=1000
+```
+
+在我的系统中，节拍率被设置成了 1000， 表示每秒触发 1000 次时间中断。节拍率是内核选项，用户不能直接访问。因此，内核提供了一个用户节拍率，它的值固定为 100。
+
+通过 /proc 虚拟文件系统可以查看系统内部状态信息。
+
+``` sh
+# 只保留各个CPU的数据
+$ cat /proc/stat | grep ^cpu
+cpu  1700286 825 167257 601777927 9809 0 3234 0 0 0
+cpu0 401326 218 34540 150509513 1701 0 680 0 0 0
+cpu1 454424 187 55370 150374417 2842 0 1287 0 0 0
+cpu2 434167 207 47479 150403282 3283 0 742 0 0 0
+cpu3 410368 211 29867 150490713 1982 0 523 0 0 0
+```
+
+第一列表示的是 CPU 编号，第一行没有编号的 cpu ，表示的是所有 CPU 的累加。其他列的含义可以通过 man proc 查看。
+
+以下是常见的CPU 使用率相关的指标：
+
+- user（通常缩写为 us），代表用户态 CPU 时间。不包括nice，但是包括 guest。
+- nice（通常缩写为 ni），代表低优先级用户态 CPU 时间
+- system（通常缩写为 sys），代表内核态 CPU 时间。
+- idle（通常缩写为 id），代表空闲时间。注意，它不包括等待 I/O 的时间（iowait）。
+- iowait（通常缩写为 wa），代表等待 I/O 的 CPU 时间。
+- irq（通常缩写为 hi），代表处理硬中断的 CPU 时间。
+- softirq（通常缩写为 si），代表处理软中断的 CPU 时间。
+- steal（通常缩写为 st），代表当系统运行在虚拟机中的时候，被其他虚拟机占用的 CPU 时间。
+- guest（通常缩写为 guest），代表通过虚拟化运行其他操作系统的时间，也就是运行虚拟机的 CPU 时间。
+- guest_nice（通常缩写为 gnice），代表以低优先级运行虚拟机的时间。
+
+**CPU 使用率，就是除了空闲时间外的其他时间占总 CPU 时间的百分比**，用公式来表示就是：
+
+$$CPU 使用率 = 1 - \frac{空闲时间}{总 CPU 时间}$$
+
+/proc/stat 记录的是开机以来的数据，不能代表当前的状态，没有参考价值。一般情况下，可以去某段时间的差值求取平均 CPU 使用率：
+
+$$CPU 使用率 = 1 - \frac{空闲时间_{new} - 空闲时间_{old}}{总 CPU 时间_{new} - 总 CPU 时间_{old}}$$
+
+### 怎么查看 CPU 使用率
+
+- top 显示了系统总体的 CPU 和内存使用情况，以及各个进程的资源使用情况。
+- ps 则只显示了每个进程的资源使用情况。
+
+```sh
+$ top
+top - 23:35:18 up 17 days, 11:48,  3 users,  load average: 0.00, 0.01, 0.05
+Tasks: 126 total,   1 running, 125 sleeping,   0 stopped,   0 zombie
+%Cpu(s):  0.0 us,  1.5 sy,  0.0 ni, 98.5 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st
+KiB Mem :  8010576 total,  2643456 free,   824480 used,  4542640 buff/cache
+KiB Swap:  2097148 total,  2097148 free,        0 used.  6855140 avail Mem
+
+  PID USER      PR  NI    VIRT    RES    SHR S  %CPU %MEM     TIME+ COMMAND
+18481 root      20   0  162128   2236   1540 R   6.2  0.0   0:00.01 top
+    1 root      20   0  191108   3964   2448 S   0.0  0.0   0:19.27 systemd
+    2 root      20   0       0      0      0 S   0.0  0.0   0:00.26 kthreadd
+    3 root      20   0       0      0      0 S   0.0  0.0   0:02.60 ksoftirqd/0
+    5 root       0 -20       0      0      0 S   0.0  0.0   0:00.00 kworker/0:0H
+    7 root      rt   0       0      0      0 S   0.0  0.0   0:00.33 migration/0
+    8 root      20   0       0      0      0 S   0.0  0.0   0:00.00 rcu_bh
+```
+
+top 默认每隔三秒刷新一次，显示的是所有 CPU 的平均值，这个时候你只需要按下数字 1 ，就可以切换到每个 CPU 的使用率了。
+
+top 命令没有细分用户态 CPU 和内核态 CPU；可以使用 pidstat 查看每个进程的详细情况。
+
+```sh
+$ pidstat 1 5
+Linux 3.10.0-693.el7.x86_64 (localhost.localdomain)     2020年06月28日  _x86_64_        (4 CPU)
+
+23时38分48秒   UID       PID    %usr %system  %guest    %CPU   CPU  Command
+23时38分49秒     0     18495    0.99    0.99    0.00    1.98     0  pidstat
+
+23时38分49秒   UID       PID    %usr %system  %guest    %CPU   CPU  Command
+23时38分50秒     0     18495    0.00    1.00    0.00    1.00     0  pidstat
+
+...
+
+平均时间:   UID       PID    %usr %system  %guest    %CPU   CPU  Command
+平均时间:    27     17617    0.20    0.00    0.00    0.20     -  mysqld
+平均时间:     0     18495    0.40    1.00    0.00    1.40     -  pidstat
+平均时间:     0     29799    0.20    0.00    0.00    0.20     -  vmtoolsd
+
+```
+
+
+
+### CPU 使用率过高怎么办？
+
+GDB 调试程序的过程会中断程序运行，这在线上环境往往是不允许的。GDB 只适合用在性能分析的后期，当你找到了出问题的大致函数后，线下再借助它来进一步调试函数内部的问题。
+
+perf 是 Linux 2.6.31 以后内置的性能分析工具。它以性能事件采样为基础，不仅可以分析系统的各种事件和内核性能，还可以用来分析指定应用程序的性能问题。
+
+perf top，类似于 top，它能够实时显示占用 CPU 时钟最多的函数或者指令，因此可以用来查找热点函数。
+
+```sh
+$ perf top
+Samples: 4K of event 'cpu-clock', 4000 Hz, Event count (approx.): 777304510 lost: 0/0 drop: 0/0
+Overhead  Shared Object       Symbol
+  11.82%  perf                [.] __symbols__insert
+   3.96%  perf                [.] rb_next
+   3.10%  libc-2.17.so        [.] __GI_____strtoull_l_internal
+   2.91%  [kernel]            [k] module_get_kallsym
+   2.68%  [kernel]            [k] number.isra.2
+```
+
+第一行包括：采样数、事件类型、节拍率、事件总数（不同的Linux 发行版数据有所不同）
+
+第二行的数据包含四列：
+
+- Overhead ，是该符号的性能事件在所有采样中的比例，用百分比来表示。
+- Shared ，是该函数或指令所在的动态共享对象（Dynamic Shared Object），如内核、进程名、动态链接库名、内核模块名等。
+- Object ，是动态共享对象的类型。比如 [.] 表示用户空间的可执行程序、或者动态链接库，而 [k] 则表示内核空间。
+- Symbol 是符号名，也就是函数名。当函数名未知时，用十六进制的地址来表示。
+
+perf record 提供了保存数据的功能，保存后的数据，需要你用 perf report 解析展示。使用时加上 -g 参数，开启调用关系的采样。
+
+### 案例
+
+使用 docker 部署 nginx 和 php 服务，ab 命令进行 http 压力测试。
+
+```sh
+# -g开启调用关系分析，-p指定php-fpm的进程号21650
+$ perf top -g -p 21650
++   23.87%     0.00%  [unknown]           [.] 0x6cb6258d4c544155                                                      ◆
++   23.87%     0.00%  libc-2.24.so        [.] 0x00007f08f84f72e1                                                      ▒
++   23.84%     0.00%  php-fpm             [.] 0x000055fee4396642                                                      ▒
+-   23.83%     0.00%  php-fpm             [.] 0x000055fee41476fc                                                      ▒
+     0x55fee41476fc                                                                                                   ▒
+     0x55fee41f6f94                                                                                                   ▒
+   + 0x55fee428e323                                                                                                   ▒
++   23.83%     0.00%  php-fpm             [.] 0x000055fee41f6f94                                                      ▒
++   23.83%     0.00%  php-fpm             [.] 0x000055fee428e323                                                      ▒
++   22.27%     0.00%  php-fpm             [.] 0x000055fee428d96e
+```
+
+centos 7 下 perf top 无法定位到具体的函数，会只显示十六进制的地址，需要使用 perf record 将记录保存下来，再到容器内部查看结果。
+
+```sh
+$ perf record -g -p 21699
+$ docker cp perf.data phpfpm:/tmp
+$ docker exec -i -t phpfpm bash
+$ cd /tmp/
+$ apt-get update && apt-get install -y linux-perf linux-tools procps
++   99.95%     0.00%  php-fpm  libc-2.24.so                [.] __libc_start_main                                      ▒
++   99.95%     0.00%  php-fpm  [unknown]                   [k] 0x6cb6258d4c544155                                     ▒
++   99.84%     0.00%  php-fpm  php-fpm                     [.] 0xffffaa011d000642                                     ▒
++   99.83%     0.00%  php-fpm  php-fpm                     [.] php_execute_script                                     ▒
++   99.82%     0.00%  php-fpm  php-fpm                     [.] zend_execute_scripts                                   ▒
++   99.82%     0.00%  php-fpm  php-fpm                     [.] zend_execute                                           ▒
++   96.64%     4.39%  php-fpm  php-fpm                     [.] execute_ex                                             ▒
++   23.33%     0.00%  php-fpm  php-fpm                     [.] 0xffffaa011cef9a7c                                     ▒
++   18.52%     0.00%  php-fpm  php-fpm                     [.] 0xffffaa011cfc2ea3                                     ▒
++    6.34%     6.31%  php-fpm  libm-2.24.so                [.] sqrt                                                   ▒
++    6.01%     5.98%  php-fpm  php-fpm                     [.] add_function   
+```
 
